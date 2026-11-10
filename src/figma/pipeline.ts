@@ -154,19 +154,36 @@ export async function generateImage(opts: {
     model: opts.model,
   });
   let genResult: ToolResult;
-  try {
-    genResult = await figma.callTool("generate_image", genArgs);
-  } catch (err) {
-    if (err instanceof FigmaMcpError) {
-      // Re-throw with the exact args sent (prompt truncated) — makes bad
-      // fileKey/model/size errors self-explanatory.
-      throw new FigmaMcpError(
-        `${err.message} [sent: fileKey=${opts.fileKey}, model=${opts.model ?? "(figma default)"}, ` +
-          `width=${opts.width ?? "auto"}, height=${opts.height ?? "auto"}, nodeId=${opts.nodeId ?? "none"}]`,
-        err.status,
+  for (let attempt = 1; ; attempt++) {
+    try {
+      genResult = await figma.callTool("generate_image", genArgs);
+      break;
+    } catch (err) {
+      const enrich = () => {
+        if (err instanceof FigmaMcpError) {
+          // Re-throw with the exact args sent (prompt truncated) — makes bad
+          // fileKey/model/size errors self-explanatory.
+          return new FigmaMcpError(
+            `${err.message} [sent: fileKey=${opts.fileKey}, model=${opts.model ?? "(figma default)"}, ` +
+              `width=${opts.width ?? "auto"}, height=${opts.height ?? "auto"}, nodeId=${opts.nodeId ?? "none"}]`,
+            err.status,
+          );
+        }
+        return err;
+      };
+      // Figma's generation service fails transiently ("Image generation
+      // failed"). Retry those; argument/schema errors are deterministic —
+      // fail fast instead of burning attempts.
+      const retryable =
+        err instanceof FigmaMcpError &&
+        !/invalid|validation|schema|required|expected|unsupported/i.test(err.message);
+      if (!retryable || attempt >= 3) throw enrich();
+      const delay = attempt * 3000;
+      console.warn(
+        `[figma] generate_image attempt ${attempt} failed (${err instanceof Error ? err.message.split("\n")[0] : err}); retrying in ${delay}ms`,
       );
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
-    throw err;
   }
   const gen = parseToolJson(genResult);
   const model = pick(gen, ["model", "modelId", "model_id"]);
