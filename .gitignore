@@ -4,3 +4,5 @@ dist/
 .figma-auth.json
 generated/
 *.log
+
+tools.txt

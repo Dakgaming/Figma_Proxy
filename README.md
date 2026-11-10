@@ -44,6 +44,11 @@ access once; the token is stored locally.
 | `CALLBACK_PORT` | `8742` | Local OAuth callback port (must be free during login) |
 | `PROXY_API_KEY` | *(empty)* | If set, clients must send `Authorization: Bearer <key>` |
 | `FIGMA_FILE_KEY` | *(required)* | Target Figma file (raw key or full URL) images are generated into |
+| `FIGMA_MODEL` | *(Figma default)* | Model used when a request doesn't name one |
+| `FIGMA_KEEP_IMAGES` | *(off)* | `1` keeps generated nodes on the canvas instead of deleting them |
+| `FIGMA_UPSCALE` | `1` | `0` returns Figma's native pixels instead of resizing to the requested `size` |
+| `FIGMA_DEFAULT_SIZE` | *(empty)* | Size applied when a request omits `size`, e.g. `1920x1080` |
+| `FIGMA_OUTPUT_FORMAT` | `png` | `png`, `jpeg`, or `webp` (per-request `output_format` wins) |
 | `FIGMA_MCP_URL` | `https://mcp.figma.com/mcp` | Figma MCP endpoint |
 | `MODEL_ID` | `figma-image-1` | Model name advertised on `/v1/models` |
 | `TOKEN_STORE` | `.figma-auth.json` | Where OAuth tokens are persisted |
@@ -65,7 +70,14 @@ curl http://localhost:8741/v1/images/generations \
 ```
 
 Standard OpenAI fields: `prompt`, `model`, `n` (1–10), `size` (`"WxH"` or `"auto"`, max
-2048), `response_format` (`"b64_json"` default, or `"url"`).
+4096), `response_format` (`"b64_json"` default, or `"url"`). Also supported:
+`output_format` (`"png"`/`"jpeg"`/`"webp"`) and `output_compression` (0–100, jpeg/webp).
+
+`size` is delivered **exactly**. Figma's models cap their native output at 1536px on
+the long edge (1024px square) — verified: asking for 1920x1080 or 2048x1152 always comes
+back 1536x864 — so larger sizes are resampled by the proxy (Lanczos3 + light unsharp
+mask on upscale). Native detail can't be invented, but you get true 1920x1080 files.
+Set `FIGMA_UPSCALE=0` to get Figma's raw pixels instead of a resample.
 
 ### Choosing a Figma model
 
@@ -106,9 +118,19 @@ memory and are lost on restart.
 ### Quality and canvas cleanup
 
 The proxy downloads the **full-resolution** image from the URL `generate_image`
-returns (`image.url`), not the inline thumbnail. If you still see soft output, pass
-`size` (e.g. `"1024x1536"`) to guide the aspect/size — Figma picks the final
-dimensions.
+returns (`image.url`), not the inline thumbnail, and verifies the pixel dimensions
+against what Figma reported.
+
+Native ceiling per aspect (measured against the live MCP server):
+
+| `size` requested | Figma returns |
+| --- | --- |
+| `1920x1080`, `2048x1152` | `1536x864` |
+| `1024x1024` | `1024x1024` |
+
+So `"size": "1920x1080"` gives a real 1920x1080 file, upscaled from 1536x864 in the
+proxy (Lanczos3 + mild sharpen). `size` never distorts: near-identical aspect ratios
+are resampled directly, genuinely different ones are centre-cropped to cover.
 
 By default the generated node is **deleted from the Figma file** right after the
 full-res image is downloaded (via the `use_figma` tool), so the file stays
@@ -156,7 +178,7 @@ To expose it beyond localhost, put it behind a reverse proxy with HTTPS and set
   tightens this, the login step may need updating.
 - `generate_image` checks AI permissions and credits against the destination file, so
   the file must live on a plan with Figma AI enabled, and your account needs edit access.
-- Requested `size` sets the aspect ratio; Figma decides the final dimensions. The
-  actual size is whatever `download_assets` returns.
+- Requested `size` sets the aspect ratio Figma generates at; the proxy then delivers
+  exactly that pixel size, resampling from Figma's native output (max 1536px long edge).
 - The proxy advertises one model id. Figma picks the concrete image model per
   generation and returns it in the `figma.model` trace field.

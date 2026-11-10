@@ -265,7 +265,7 @@ async function pickBestImage(
 }
 
 /** Reads pixel dimensions straight from PNG/JPEG bytes. */
-function imageDimensions(bytes: Buffer): { width: number; height: number } | undefined {
+export function imageDimensions(bytes: Buffer): { width: number; height: number } | undefined {
   // PNG: IHDR width/height at fixed offsets
   if (bytes.length > 24 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
     return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
